@@ -1,59 +1,114 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Acme Widget Co — Sales Basket POC
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Proof of concept for Acme Widget Co's sales basket: a Laravel API with a DDD-style layout, a React/TypeScript UI, MySQL, Docker Compose, PHPUnit domain tests, and Playwright end-to-end checks.
 
-## About Laravel
+## Quick start (Docker)
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+```bash
+docker compose up --build
+```
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+- UI: http://localhost:5173  
+- API: http://localhost:8080  
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+The API container waits for MySQL, then runs migrations and seeds the catalogue, delivery rules, and offers.
 
-## Learning Laravel
+## Products
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+| Product      | Code | Price  |
+|--------------|------|--------|
+| Red Widget   | R01  | $32.95 |
+| Green Widget | G01  | $24.95 |
+| Blue Widget  | B01  | $7.95  |
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Business rules
 
-## Laravel Sponsors
+**Delivery** (based on the subtotal **after** offers):
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+- under $50 → $4.95  
+- under $90 → $2.95  
+- $90 or more → free  
 
-### Premium Partners
+**Offer:** buy one red widget (`R01`), get the second half price. Each pair of red widgets gets one half-price discount.
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+### Example totals
 
-## Contributing
+| Basket                         | Total  |
+|--------------------------------|--------|
+| B01, G01                       | $37.85 |
+| R01, R01                       | $54.37 |
+| R01, G01                       | $60.85 |
+| B01, B01, R01, R01, R01        | $98.27 |
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Architecture
 
-## Code of Conduct
+```
+Http Controllers  →  Application Services  →  Domain
+                              ↓
+                     Repository ports
+                              ↓
+              Infrastructure (Eloquent / MySQL)
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+- **Domain** — pure PHP: `Basket`, `ProductCatalogue`, `DeliveryChargeRules`, offers, `Money`
+- **Application** — one service per use case (`ListProductsService`, `CalculateBasketTotalService`)
+- **Http** — thin controllers + form requests only
+- **Infrastructure** — Eloquent models and repositories that implement domain ports
 
-## Security Vulnerabilities
+The basket is **stateless**: the UI sends the full list of product codes on each total request. There is no order persistence.
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+### API
 
-## License
+- `GET /api/products`
+- `POST /api/basket/total` with body `{ "items": ["B01", "G01"] }`  
+  → `{ "total": 37.85, "formatted": "$37.85" }`
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Assumptions
+
+- Money is stored and calculated in **cents** (`int`) to avoid floating-point drift.
+- Half-price discounts use half-up rounding to the nearest cent (`32.95 / 2` → `16.48`).
+- Delivery is calculated on the amount **after** offers.
+- Catalogue, delivery tiers, and offers live in MySQL and are seeded; the domain stays free of Eloquent.
+- No authentication, checkout, or order history in this PoC.
+- Application code has no docblocks; naming and types carry intent. This README documents architecture and assumptions.
+
+## Tests
+
+```bash
+# Domain / PHPUnit (inside API container or locally)
+docker compose exec api php artisan test
+# or: php artisan test
+
+# Frontend E2E (needs Node 20+; starts local API + Vite)
+cd frontend
+npm install
+npx playwright install chromium
+npm run test:e2e
+```
+
+## Local development (without Docker UI)
+
+```bash
+# API (MySQL required, or switch .env to sqlite for domain-only work)
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate --seed
+php artisan serve
+
+# UI
+cd frontend
+npm install
+npm run dev
+```
+
+Vite proxies `/api` to `http://127.0.0.1:8000` by default.
+
+## Docker services
+
+| Service   | Role                                      |
+|-----------|-------------------------------------------|
+| `mysql`   | MySQL 8                                   |
+| `api`     | PHP-FPM + Laravel                         |
+| `nginx`   | Serves the Laravel API on port 8080       |
+| `frontend`| Built SPA + nginx, proxies `/api` to nginx|
